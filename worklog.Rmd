@@ -1,0 +1,218 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+# Installing necessary software
+In macOS, install warc
+
+```
+brew install python
+pip install warc
+```
+
+# Extract crawl logs
+
+Create an input file listing all warc files with full paths.
+```
+d17001:data au124378$ cat input
+~/R/Data/1-metadata-1.warc.gz
+~/R/Data/2-metadata-1.warc.gz
+~/R/Data/3-metadata-1.warc.gz
+~/R/Data/4-metadata-1.warc.gz
+~/R/Data/5-metadata-1.warc.gz
+~/R/Data/6-metadata-1.warc.gz
+~/R/Data/7-metadata-1.warc.gz
+~/R/Data/8-metadata-1.warc.gz
+~/R/Data/9-metadata-1.warc.gz
+~/R/Data/10-metadata-1.warc.gz
+~/R/Data/11-metadata-1.warc.gz
+~/R/Data/12-metadata-1.warc.gz
+~/R/Data/13-metadata-1.warc.gz
+~/R/Data/14-metadata-1.warc.gz
+~/R/Data/15-metadata-1.warc.gz
+~/R/Data/16-metadata-1.warc.gz
+```
+
+Create an output directory and change to that directory
+
+```
+mkdir out
+cd out
+```
+
+Run python script from the folder. The log files will be output here.
+```
+python ../extract_multiple_archives.py ../input crawl.log 2>outputreport.txt
+```
+
+# Import into R
+## Setup your environment in R 
+First we setup tidyverse and other packages:
+
+ * tidyverse
+ * lubridate
+ * stringr
+ * urltools
+
+```{r setup}
+library(tidyverse)
+library(lubridate)
+library(stringr)
+library(urltools)
+```
+
+## Read a crawl log into R
+1	2014-09-18T11:01:47.192Z	1	57	dns:www.netlab.dk	P	http://www.netlab.dk/	text/dns	#050	20140918110146365+109	sha1:BESLW4DNNLC66Q4RCJXOGI2C5R46WE77	-	content-size:57
+
+```{r}
+c1 <- read_tsv("./data/out/1_crawl.log", 
+               col_names = c(
+                 "jobid",
+                 "date",
+                 "response_code",
+                 "content_length",
+                 "url",
+                 "discovery_path",
+                 "referrer_url",
+                 "mime",
+                 "worker_thread",
+                 "fetch_time",
+                 "digest",
+                 "source_tag",
+                 "annotations"),
+               na = '-')
+```
+
+```{r}
+c1
+```
+
+## Clean data
+```{r}
+c2 <- c1 %>% 
+  mutate(digest = str_sub(digest, 6, -1)) %>% 
+  separate(fetch_time, c("fetch_time", "duration"), sep = "\\+") %>% 
+  separate(url, "protocol", sep = ":", remove = FALSE) %>% 
+  mutate(protocol = factor(protocol, levels = c("dns", "http"))) %>% 
+  separate(annotations, c("annotations", "tries"), sep = ",") %>% 
+  mutate(host = ifelse(protocol == "http", domain(url), NA)) %>% 
+  mutate(subdomain = suffix_extract(host)$subdomain) %>% 
+  mutate(domain = suffix_extract(host)$"domain") %>% 
+  mutate(suffix = suffix_extract(host)$suffix)
+```
+
+## Example: show distribution by suffix
+```{r}
+c2 %>% 
+  group_by(suffix) %>% 
+  summarise(count = n())
+```
+
+## Example: show lines from hosts with suffix "googleapis.com"
+```{r}
+c2 %>% 
+  filter(suffix == "googleapis.com")
+
+```
+
+## Example: show all DNS lookups
+```{r}
+c2 %>% 
+  filter(protocol == "dns")
+```
+
+## testing all logs
+```{r}
+c5 <- read_tsv("./data/out/all.log", 
+               col_names = c(
+                 "jobid",
+                 "date",
+                 "response_code",
+                 "content_length",
+                 "url",
+                 "discovery_path",
+                 "referrer_url",
+                 "mime",
+                 "worker_thread",
+                 "fetch_time",
+                 "digest",
+                 "source_tag",
+                 "annotations"),
+               na = '-')
+```
+
+### View all logs in a table
+```{r}
+c5
+```
+
+### Clean data, put into a table 'c6'
+```{r}
+c6 <- c5 %>% 
+  mutate(digest = str_sub(digest, 6, -1)) %>% 
+  separate(fetch_time, c("fetch_time", "duration"), sep = "\\+") %>% 
+  separate(url, "protocol", sep = ":", remove = FALSE) %>% 
+  mutate(protocol = factor(protocol, levels = c("dns", "http"))) %>% 
+  separate(annotations, c("annotations", "tries"), sep = ",") %>% 
+  mutate(host = ifelse(protocol == "http", domain(url), NA)) %>% 
+  mutate(subdomain = suffix_extract(host)$subdomain) %>% 
+  mutate(domain = suffix_extract(host)$"domain") %>% 
+  mutate(suffix = suffix_extract(host)$suffix)
+```
+
+### Example: show all seed URLs (DNS requests)
+```{r}
+c6 %>% 
+  filter(jobid > 1) %>% 
+  filter(protocol == "dns", discovery_path == "P")
+```
+
+### Example: select jobid, date and url first
+```{r}
+c6 %>%
+  filter(jobid > 1) %>% 
+  filter(protocol == "dns", discovery_path == "P") %>%
+  select(jobid, date, referrer_url, everything()) %>% 
+  arrange(jobid)
+```
+
+### Example: group and count seed list
+```{r}
+c6 %>%
+  filter(jobid > 1, protocol == "dns", discovery_path == "P") %>%
+  # select(jobid, date, url, everything()) %>% 
+  # arrange(jobid)
+  group_by(jobid) %>% 
+  summarise(
+    no_of_domains = n()
+  )
+```
+
+### Example: show all linked URLs (LP)
+```{r}
+c6 %>% 
+  filter(jobid > 1) %>% 
+  filter(protocol == "dns", discovery_path == "P")
+```
+
+### Example: show all linked URLs (LP)
+```{r}
+abe <- c6 %>% 
+  filter(jobid == 1) 
+```
+
+
+### Per test
+```{r, eval = FALSE}
+pot_headless <- c6 %>% 
+  filter(jobid == 2) %>% 
+  filter(host != "fodbold.aabsport.dk", discovery_path == "P") %>%
+  bind_rows(pot_headless)
+```
+
+```{r, eval = FALSE}
+df %>% 
+  filter(host %in% seeds)
+```
+
